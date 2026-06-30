@@ -1,0 +1,40 @@
+name: Update compliance feed
+
+on:
+  schedule:
+    # 6x daily (every 4 hours). Official PIB releases publish same-day; this catches them within hours.
+    - cron: "17 1,5,9,13,17,21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install signer dependency
+        run: pip install cryptography
+
+      - name: Generate + sign feed
+        env:
+          FEED_SIGNING_KEY: ${{ secrets.FEED_SIGNING_KEY }}
+        run: python scripts/generate_feed.py
+
+      - name: Commit feed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add announcements.json announcements.json.sig
+          if git diff --cached --quiet; then
+            echo "No changes."
+          else
+            git commit -m "chore: refresh compliance feed (auto)"
+            git push
+          fi
