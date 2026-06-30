@@ -2,8 +2,9 @@
 """
 Official GoI compliance feed generator.
 
-Fetches OFFICIAL Government of India press releases (PIB Allrel.aspx), filters to
-GST + Income-Tax items, tags them, and emits a signed announcements.json.
+Fetches OFFICIAL Government of India press releases (PIB, English listing), filters to
+GST + Income-Tax items, enriches each with its real publish date (from the detail page),
+and emits a signed announcements.json.
 
 Signing: Ed25519 detached signature over the exact UTF-8 bytes of announcements.json,
 base64-encoded into announcements.json.sig. The private key never leaves the GitHub
@@ -17,35 +18,45 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 from datetime import datetime, timezone
 
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
-PIB_ALLREL_URL = "https://www.pib.gov.in/Allrel.aspx"
+# English PIB listing (Lang=1). Confirmed to return English titles incl. Finance/GST releases.
+PIB_ALLREL_URL = "https://www.pib.gov.in/Allrel.aspx?Reg=3&Lang=1"
 ENTRY_RE = re.compile(
-    r"<a[^>]*title=['\"](?P<title>[^'\"]+)['\"][^>]*href=['\"]/(?P<href>PressReleasePage\.aspx\?PRID=(?P<prid>\d+))['\"][^>]*>",
+    r"<a[^>]*title=['\"](?P<title>[^'\"]+)['\"][^>]*"
+    r"href=['\"]/(?P<href>PressReleasePage\.aspx\?PRID=(?P<prid>\d+))['\"][^>]*>",
     re.IGNORECASE,
 )
+DATE_RE = re.compile(r"(\d{1,2})\s+([A-Z]{3})\s+(\d{4})")
+MONTHS = {
+    "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+    "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+}
 
-# Keyword tagging (English + Hindi). Official PIB releases are often bilingual.
-GST_KEYWORDS = ["gst", "jeesetee", "cbic", "customs", "indirect tax"]
-# (Hindi "जीएसटी" is matched via its latin transliteration fallback below)
-INCOME_TAX_KEYWORDS = ["income tax", "cbdt", "itr", "direct tax", "26as", "tds", "advance tax"]
-GST_HINDI = "जीएसटी"
-IT_HINDI = ["आयकर", "सीबीडीटी"]
+GST_KEYWORDS = [
+    "gst", "cbic", "customs", "indirect tax", "e-invoice", "e-way",
+    "goods and services tax", "input tax credit", "itc",
+]
+INCOME_TAX_KEYWORDS = [
+    "income tax", "income-tax", "cbdt", " itr", "direct tax", "26as", " tds ",
+    "advance tax", "ais ", " face ", "income declaration", "tax deducted",
+]
 
 
 def categorize(text: str) -> str:
-    t = text.lower()
-    if GST_HINDI in text or any(k in t for k in GST_KEYWORDS):
+    t = " " + text.lower() + " "
+    if any(k in t for k in GST_KEYWORDS):
         return "GST"
-    if any(h in text for h in IT_HINDI) or any(k in t for k in INCOME_TAX_KEYWORDS):
+    if any(k in t for k in INCOME_TAX_KEYWORDS):
         return "INCOME_TAX"
     return "GENERAL"
 
 
-def fetch_html(url: str) -> str:
+def fetch_text(url: str) -> str:
     req = urllib.request.Request(
         url, headers={"User-Agent": "GoI-Compliance-Feed/1.0 (+official PIB monitor)"}
     )
@@ -53,22 +64,14 @@ def fetch_html(url: str) -> str:
         return resp.read().decode("utf-8", errors="replace")
 
 
-def parse_entries(html: str):
-    seen = set()
-    for m in ENTRY_RE.finditer(html):
-        prid = m.group("prid")
-        if prid in seen:
-            continue
-        seen.add(prid)
-        title = m.group("title").strip()
-        yield {
-            "id": f"pib-{prid}",
-            "title": title,
-            "sourceUrl": f"https://pib.gov.in/PressReleasePage.aspx?PRID={prid}",
-            "category": categorize(title),
-            "summary": "",
-            "ministry": "PIB",
-        }
+def parse_date(html: str, fallback: str) -> str:
+    m = DATE_RE.search(html)
+    if m and m.group(2) in MONTHS:
+        try:
+            return datetime(int(m.group(3)), MONTHS[m.group(2)], int(m.group(1)), tzinfo=timezone.utc).isoformat()
+        except Exception:
+            return fallback
+    return fallback
 
 
 def main():
@@ -77,17 +80,36 @@ def main():
         print("FEED_SIGNING_KEY secret missing", file=sys.stderr)
         sys.exit(1)
 
-    html = fetch_html(PIB_ALLREL_URL)
     now = datetime.now(timezone.utc).isoformat()
+    html = fetch_text(PIB_ALLREL_URL)
 
-    # Keep only GST + Income-Tax items (the app's scope); drop GENERAL noise for now.
-    items = [e for e in parse_entries(html) if e["category"] in ("GST", "INCOME_TAX")]
-    for e in items:
-        e["publishedAt"] = now  # TODO: extract real publish date from PIB detail page.
+    seen = set()
+    items = []
+    for m in ENTRY_RE.finditer(html):
+        prid = m.group("prid")
+        if prid in seen:
+            continue
+        seen.add(prid)
+        title = m.group("title").strip()
+        category = categorize(title)
+        if category not in ("GST", "INCOME_TAX"):
+            continue  # app scope: GST + Income Tax only
+
+        detail_html = fetch_text(f"https://pib.gov.in/PressReleasePage.aspx?PRID={prid}")
+        items.append({
+            "id": f"pib-{prid}",
+            "title": title,
+            "sourceUrl": f"https://pib.gov.in/PressReleasePage.aspx?PRID={prid}",
+            "category": category,
+            "summary": "",
+            "ministry": "PIB",
+            "publishedAt": parse_date(detail_html, now),
+        })
+        time.sleep(1)  # be polite to PIB between detail fetches
 
     feed = {
         "generatedAt": now,
-        "source": "PIB Allrel.aspx (official)",
+        "source": "PIB Allrel.aspx (official, English)",
         "announcements": items,
     }
 
@@ -95,15 +117,13 @@ def main():
     json_path = os.path.join(out_dir, "announcements.json")
     sig_path = os.path.join(out_dir, "announcements.json.sig")
 
-    # Deterministic formatting so bytes are stable.
     payload = json.dumps(feed, ensure_ascii=False, indent=2).encode("utf-8")
     with open(json_path, "wb") as f:
         f.write(payload)
 
     priv = load_pem_private_key(pem.encode("utf-8"), password=None)
-    signature = priv.sign(payload)
     with open(sig_path, "w") as f:
-        f.write(base64.b64encode(signature).decode("ascii"))
+        f.write(base64.b64encode(priv.sign(payload)).decode("ascii"))
 
     print(f"wrote {len(items)} announcements (GST/Income-Tax) -> {json_path}")
 
