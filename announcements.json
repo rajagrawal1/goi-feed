@@ -1,7 +1,16 @@
 {
-  "generatedAt": "2026-06-30T11:37:20.182623+00:00",
+  "generatedAt": "2026-06-30T14:01:18.809812+00:00",
   "source": "PIB Allrel.aspx (official, English)",
   "announcements": [
+    {
+      "id": "pib-2279424",
+      "title": "Government extends full customs duty exemption on critical petrochemical products in view of ongoing conflict in West Asia till 15th July 2026",
+      "sourceUrl": "https://pib.gov.in/PressReleasePage.aspx?PRID=2279424",
+      "category": "GST",
+      "summary": "",
+      "ministry": "PIB",
+      "publishedAt": "2026-06-30T00:00:00+00:00"
+    },
     {
       "id": "pib-2279274",
       "title": "Government extends last date for filing appeals before the GST Appellate Tribunal to 31st July 2026",
