@@ -1,5 +1,15 @@
 {
-  "generatedAt": "2026-07-09T05:09:26.986486+00:00",
+  "generatedAt": "2026-07-09T08:52:58.443702+00:00",
   "source": "PIB Allrel.aspx (official, English)",
-  "announcements": []
+  "announcements": [
+    {
+      "id": "pib-2282742",
+      "title": "NFDC–NFAIs Archival Preservation Brings Malayalam Classic",
+      "sourceUrl": "https://pib.gov.in/PressReleasePage.aspx?PRID=2282742",
+      "category": "INCOME_TAX",
+      "summary": "",
+      "ministry": "PIB",
+      "publishedAt": "2026-07-09T00:00:00+00:00"
+    }
+  ]
 }
