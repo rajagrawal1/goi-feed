@@ -1,15 +1,5 @@
 {
-  "generatedAt": "2026-07-14T18:18:11.469442+00:00",
+  "generatedAt": "2026-07-14T22:15:18.578604+00:00",
   "source": "PIB Allrel.aspx (official, English)",
-  "announcements": [
-    {
-      "id": "pib-2284474",
-      "title": "MoFPI - NIFTEM, Thanjavur - Launching of pilot Short Term Skill Training Programme (STSTP) at ITC-Trichy",
-      "sourceUrl": "https://pib.gov.in/PressReleasePage.aspx?PRID=2284474",
-      "category": "GST",
-      "summary": "",
-      "ministry": "PIB",
-      "publishedAt": "2026-07-14T00:00:00+00:00"
-    }
-  ]
+  "announcements": []
 }
