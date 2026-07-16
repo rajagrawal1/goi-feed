@@ -39,11 +39,11 @@ MONTHS = {
 
 GST_KEYWORDS = [
     "gst", "cbic", "customs", "indirect tax", "e-invoice", "e-way",
-    "goods and services tax", "input tax credit", "itc",
+    "goods and services tax", "input tax credit",
 ]
 INCOME_TAX_KEYWORDS = [
     "income tax", "income-tax", "cbdt", " itr", "direct tax", "26as", " tds ",
-    "advance tax", "ais ", " face ", "income declaration", "tax deducted",
+    "advance tax", " face ", "income declaration", "tax deducted",
 ]
 
 
@@ -72,6 +72,28 @@ def parse_date(html: str, fallback: str) -> str:
         except Exception:
             return fallback
     return fallback
+
+
+def load_existing(path: str) -> dict:
+    """Load the previously committed feed as an id -> item dict. Immutable base for the merge."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return {it["id"]: it for it in json.load(f).get("announcements", [])}
+    except Exception:
+        return {}
+
+
+def merge(existing: dict, new_items: list) -> dict:
+    """Append-merge by stable id. Once captured, an entry is never dropped; the current
+    run only enriches fields (keeps the earliest known publishedAt, fills a summary only
+    if it was empty). An empty scrape therefore leaves the archive untouched (no wipe)."""
+    for it in new_items:
+        old = existing.get(it["id"])
+        if old:
+            it["publishedAt"] = old.get("publishedAt") or it.get("publishedAt")
+            it["summary"] = old.get("summary") or it.get("summary", "") or ""
+        existing[it["id"]] = it
+    return existing
 
 
 def main():
@@ -107,15 +129,18 @@ def main():
         })
         time.sleep(1)  # be polite to PIB between detail fetches
 
-    feed = {
-        "generatedAt": now,
-        "source": "PIB Allrel.aspx (official, English)",
-        "announcements": items,
-    }
-
     out_dir = os.path.dirname(os.path.abspath(__file__)) + "/.."
     json_path = os.path.join(out_dir, "announcements.json")
     sig_path = os.path.join(out_dir, "announcements.json.sig")
+
+    merged = merge(load_existing(json_path), items)
+    ordered = sorted(merged.values(), key=lambda x: x.get("publishedAt", ""), reverse=True)
+
+    feed = {
+        "generatedAt": now,
+        "source": "PIB Allrel.aspx (official, English)",
+        "announcements": ordered,
+    }
 
     payload = json.dumps(feed, ensure_ascii=False, indent=2).encode("utf-8")
     with open(json_path, "wb") as f:
@@ -125,7 +150,7 @@ def main():
     with open(sig_path, "w") as f:
         f.write(base64.b64encode(priv.sign(payload)).decode("ascii"))
 
-    print(f"wrote {len(items)} announcements (GST/Income-Tax) -> {json_path}")
+    print(f"feed now holds {len(ordered)} announcements ({len(items)} new this run) -> {json_path}")
 
 
 if __name__ == "__main__":
