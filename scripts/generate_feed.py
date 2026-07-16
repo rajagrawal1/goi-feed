@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-Official GoI compliance feed generator.
+Income Tax Department compliance feed generator.
 
-Fetches OFFICIAL Government of India press releases (PIB, English listing), filters to
-GST + Income-Tax items, enriches each with its real publish date (from the detail page),
-and emits a signed announcements.json.
+Fetches the OFFICIAL Income Tax Department "Latest News" RSS feed
+(incometax.gov.in), which is income-tax-only by definition (CBDT notifications,
+ITR-utility rollouts, TDS/exemption notices, e-filing updates). Each run appends
+new items to the immutable archive by stable id and emits a signed
+announcements.json.
 
 Signing: Ed25519 detached signature over the exact UTF-8 bytes of announcements.json,
 base64-encoded into announcements.json.sig. The private key never leaves the GitHub
@@ -14,68 +16,85 @@ embeds the public key and refuses any feed whose signature does not verify.
 No third-party content, no LLM, no server we run.
 """
 import base64
+import html as _html
 import json
 import os
 import re
 import sys
-import time
 import urllib.request
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
-# English PIB listing (Lang=1). Confirmed to return English titles incl. Finance/GST releases.
-PIB_ALLREL_URL = "https://www.pib.gov.in/Allrel.aspx?Reg=3&Lang=1"
-ENTRY_RE = re.compile(
-    r"<a[^>]*title=['\"](?P<title>[^'\"]+)['\"][^>]*"
-    r"href=['\"]/(?P<href>PressReleasePage\.aspx\?PRID=(?P<prid>\d+))['\"][^>]*>",
-    re.IGNORECASE,
-)
-DATE_RE = re.compile(r"(\d{1,2})\s+([A-Z]{3})\s+(\d{4})")
-MONTHS = {
-    "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
-    "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
-}
+RSS_URL = "https://www.incometax.gov.in/iec/foportal/rss.xml"
 
-GST_KEYWORDS = [
-    "gst", "cbic", "customs", "indirect tax", "e-invoice", "e-way",
-    "goods and services tax", "input tax credit",
-]
-INCOME_TAX_KEYWORDS = [
-    "income tax", "income-tax", "cbdt", " itr", "direct tax", "26as", " tds ",
-    "advance tax", " face ", "income declaration", "tax deducted",
-]
+_ITEM_RE = re.compile(r"<item>(.*?)</item>", re.S)
+_DESC_RE = re.compile(r"field--name-field-news-description[^>]*>(.*?)</div>", re.S)
+_LINK_RE = re.compile(r'<a\s+href="([^"]+)"', re.S)
+_TAG = re.compile(r"<[^>]+>")
 
 
-def categorize(text: str) -> str:
-    t = " " + text.lower() + " "
-    if any(k in t for k in GST_KEYWORDS):
-        return "GST"
-    if any(k in t for k in INCOME_TAX_KEYWORDS):
-        return "INCOME_TAX"
-    return "GENERAL"
+def _pick(pattern, text, flags=0):
+    m = re.search(pattern, text, flags)
+    return m.group(1) if m else None
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def fetch_text(url: str) -> str:
     req = urllib.request.Request(
-        url, headers={"User-Agent": "GoI-Compliance-Feed/1.0 (+official PIB monitor)"}
+        url, headers={"User-Agent": "GoI-Compliance-Feed/1.0 (+official Income Tax Department monitor)"}
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         return resp.read().decode("utf-8", errors="replace")
 
 
-def parse_date(html: str, fallback: str) -> str:
-    m = DATE_RE.search(html)
-    if m and m.group(2) in MONTHS:
+def parse_feed(rss_text: str) -> list:
+    out = []
+    seen = set()
+    for m in _ITEM_RE.finditer(rss_text):
+        b = m.group(1)
+        link = _pick(r"<link>(.*?)</link>", b) or ""
+        nid = link.rstrip("/").rsplit("/", 1)[-1]
+        if not nid or nid in seen:
+            continue
+        seen.add(nid)
+
+        pub = _pick(r"<pubDate>(.*?)</pubDate>", b)
         try:
-            return datetime(int(m.group(3)), MONTHS[m.group(2)], int(m.group(1)), tzinfo=timezone.utc).isoformat()
+            published = parsedate_to_datetime(pub).astimezone(timezone.utc).isoformat()
         except Exception:
-            return fallback
-    return fallback
+            published = _now()
+
+        desc = _html.unescape(_pick(r"<description>(.*?)</description>", b, re.S) or "")
+        dm = _DESC_RE.search(desc)
+        if not dm:
+            continue  # only published news (drops internal CMS nodes / bare form refs)
+        text = re.sub(r"\s+", " ", _html.unescape(_TAG.sub("", dm.group(1)))).strip()
+        if not text:
+            continue
+
+        pdf = None
+        lm = _LINK_RE.search(dm.group(1))
+        if lm:
+            pdf = _html.unescape(lm.group(1))
+
+        out.append({
+            "id": f"itd-{nid}",
+            "title": text,
+            "sourceUrl": pdf or link,
+            "category": "INCOME_TAX",
+            "summary": text,
+            "ministry": "Income Tax Department",
+            "publishedAt": published,
+        })
+    return out
 
 
 def load_existing(path: str) -> dict:
-    """Load the previously committed feed as an id -> item dict. Immutable base for the merge."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             return {it["id"]: it for it in json.load(f).get("announcements", [])}
@@ -84,9 +103,6 @@ def load_existing(path: str) -> dict:
 
 
 def merge(existing: dict, new_items: list) -> dict:
-    """Append-merge by stable id. Once captured, an entry is never dropped; the current
-    run only enriches fields (keeps the earliest known publishedAt, fills a summary only
-    if it was empty). An empty scrape therefore leaves the archive untouched (no wipe)."""
     for it in new_items:
         old = existing.get(it["id"])
         if old:
@@ -102,32 +118,8 @@ def main():
         print("FEED_SIGNING_KEY secret missing", file=sys.stderr)
         sys.exit(1)
 
-    now = datetime.now(timezone.utc).isoformat()
-    html = fetch_text(PIB_ALLREL_URL)
-
-    seen = set()
-    items = []
-    for m in ENTRY_RE.finditer(html):
-        prid = m.group("prid")
-        if prid in seen:
-            continue
-        seen.add(prid)
-        title = m.group("title").strip()
-        category = categorize(title)
-        if category not in ("GST", "INCOME_TAX"):
-            continue  # app scope: GST + Income Tax only
-
-        detail_html = fetch_text(f"https://pib.gov.in/PressReleasePage.aspx?PRID={prid}")
-        items.append({
-            "id": f"pib-{prid}",
-            "title": title,
-            "sourceUrl": f"https://pib.gov.in/PressReleasePage.aspx?PRID={prid}",
-            "category": category,
-            "summary": "",
-            "ministry": "PIB",
-            "publishedAt": parse_date(detail_html, now),
-        })
-        time.sleep(1)  # be polite to PIB between detail fetches
+    now = _now()
+    items = parse_feed(fetch_text(RSS_URL))
 
     out_dir = os.path.dirname(os.path.abspath(__file__)) + "/.."
     json_path = os.path.join(out_dir, "announcements.json")
@@ -138,7 +130,7 @@ def main():
 
     feed = {
         "generatedAt": now,
-        "source": "PIB Allrel.aspx (official, English)",
+        "source": "Income Tax Department (incometax.gov.in/rss.xml)",
         "announcements": ordered,
     }
 
