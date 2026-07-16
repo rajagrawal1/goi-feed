@@ -1,5 +1,24 @@
 {
-  "generatedAt": "2026-07-16T00:00:00+00:00",
+  "generatedAt": "2026-07-16T11:11:52.411119+00:00",
   "source": "Income Tax Department (incometax.gov.in/rss.xml)",
-  "announcements": []
+  "announcements": [
+    {
+      "id": "itd-11888",
+      "title": "CBDT has issued Notification No. 80/2026 [F. No. 275/19/2026-IT(B)], notifying that specified payments such as interest, dividends, professional fees, commission, brokerage, and other financial service-related income received by eligible IFSC Units shall be exempt from TDS under the Income-tax Act, 2025. Click here",
+      "sourceUrl": "https://www.incometax.gov.in/iec/foportal/sites/default/files/2026-07/Notification-80-2026.pdf",
+      "category": "INCOME_TAX",
+      "summary": "CBDT has issued Notification No. 80/2026 [F. No. 275/19/2026-IT(B)], notifying that specified payments such as interest, dividends, professional fees, commission, brokerage, and other financial service-related income received by eligible IFSC Units shall be exempt from TDS under the Income-tax Act, 2025. Click here",
+      "ministry": "Income Tax Department",
+      "publishedAt": "2026-07-13T08:57:56+00:00"
+    },
+    {
+      "id": "itd-11884",
+      "title": "Excel Utility of ITR-7 for AY 2026-27 is available for filing. Click here",
+      "sourceUrl": "https://www.incometax.gov.in/iec/foportal/downloads/income-tax-returns",
+      "category": "INCOME_TAX",
+      "summary": "Excel Utility of ITR-7 for AY 2026-27 is available for filing. Click here",
+      "ministry": "Income Tax Department",
+      "publishedAt": "2026-07-09T10:19:00+00:00"
+    }
+  ]
 }
